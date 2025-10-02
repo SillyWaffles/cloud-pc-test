@@ -2,76 +2,102 @@ name: RDP
 
 on:
   workflow_dispatch:
+    inputs:
+      username:
+        description: 'Username for RDP (default: Waffles)'
+        default: 'Waffles'
+      password:
+        description: 'Password for RDP (leave blank to use stored password)'
+        default: ''
+      run_indefinitely:
+        description: 'Run indefinitely with auto-restart? (true/false)'
+        type: boolean
+        default: false
 
 jobs:
   secure-rdp:
-    runs-on: windows-latest
-    timeout-minutes: 3600
+    runs-on: windows-latest  # Usa Windows Server 2025 (similar a Win10; para Win10 puro, usa self-hosted runner)
 
     steps:
+      - name: Set Up Persistent Credentials
+        run: |
+          $username = "${{ github.event.inputs.username || 'Waffles' }}"
+          $password = "${{ github.event.inputs.password || secrets.RDP_PASSWORD }}"
+          
+          if (-not $password) {
+              Add-Type -AssemblyName System.Security
+              $charSet = @{
+                  Upper   = [char[]](65..90)
+                  Lower   = [char[]](97..122)
+                  Number  = [char[]](48..57)
+                  Special = ([char[]](33..47) + [char[]](58..64) +
+                             [char[]](91..96) + [char[]](123..126))
+              }
+              $rawPassword = @()
+              $rawPassword += $charSet.Upper | Get-Random -Count 4
+              $rawPassword += $charSet.Lower | Get-Random -Count 4
+              $rawPassword += $charSet.Number | Get-Random -Count 4
+              $rawPassword += $charSet.Special | Get-Random -Count 4
+              $password = -join ($rawPassword | Sort-Object { Get-Random })
+          }
+          
+          echo "RDP_USERNAME=$username" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          echo "::add-mask::$password"
+          
+          $token = "${{ secrets.GITHUB_TOKEN }}"
+          if ($token) {
+              $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
+              $repo = "${{ github.repository }}"
+              
+              $publicKey = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/public-key" -Headers $headers
+              $keyId = $publicKey.key_id
+              $key = $publicKey.key
+              $encrypted = ConvertTo-SecureString -String $username -AsPlainText -Force | ConvertFrom-SecureString -Key (ConvertFrom-Base64 $key)
+              $body = @{ encrypted_value = "$encrypted"; key_id = "$keyId" } | ConvertTo-Json
+              Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/RDP_USERNAME" -Method Put -Headers $headers -Body $body
+              
+              $encrypted = ConvertTo-SecureString -String $password -AsPlainText -Force | ConvertFrom-SecureString -Key (ConvertFrom-Base64 $key)
+              $body = @{ encrypted_value = "$encrypted"; key_id = "$keyId" } | ConvertTo-Json
+              Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/RDP_PASSWORD" -Method Put -Headers $headers -Body $body
+          }
+
       - name: Configure Core RDP Settings
         run: |
-          # Enable Remote Desktop and disable Network Level Authentication (if needed)
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
-                             -Name "fDenyTSConnections" -Value 0 -Force
+                           -Name "fDenyTSConnections" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "UserAuthentication" -Value 0 -Force
+                           -Name "UserAuthentication" -Value 0 -Force
           Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
-                             -Name "SecurityLayer" -Value 0 -Force
-
-          # Remove any existing rule with the same name to avoid duplication
+                           -Name "SecurityLayer" -Value 0 -Force
           netsh advfirewall firewall delete rule name="RDP-Tailscale"
-          
-          # For testing, allow any incoming connection on port 3389
           netsh advfirewall firewall add rule name="RDP-Tailscale" `
-            dir=in action=allow protocol=TCP localport=3389
-
-          # (Optional) Restart the Remote Desktop service to ensure changes take effect
+            dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
           Restart-Service -Name TermService -Force
 
-      - name: Create RDP User with Secure Password
+      - name: Create RDP User
         run: |
-          Add-Type -AssemblyName System.Security
-          $charSet = @{
-              Upper   = [char[]](65..90)      # A-Z
-              Lower   = [char[]](97..122)     # a-z
-              Number  = [char[]](48..57)      # 0-9
-              Special = ([char[]](33..47) + [char[]](58..64) +
-                         [char[]](91..96) + [char[]](123..126)) # Special characters
-          }
-          $rawPassword = @()
-          $rawPassword += $charSet.Upper | Get-Random -Count 4
-          $rawPassword += $charSet.Lower | Get-Random -Count 4
-          $rawPassword += $charSet.Number | Get-Random -Count 4
-          $rawPassword += $charSet.Special | Get-Random -Count 4
-          $password = -join ($rawPassword | Sort-Object { Get-Random })
-          $securePass = ConvertTo-SecureString $password -AsPlainText -Force
-          New-LocalUser -Name "RDP" -Password $securePass -AccountNeverExpires
-          Add-LocalGroupMember -Group "Administrators" -Member "RDP"
-          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "RDP"
+          $securePass = ConvertTo-SecureString "${{ env.RDP_PASSWORD }}" -AsPlainText -Force
+          New-LocalUser -Name "${{ env.RDP_USERNAME }}" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "${{ env.RDP_USERNAME }}"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "${{ env.RDP_USERNAME }}"
           
-          echo "RDP_CREDS=User: RDP | Password: $password" >> $env:GITHUB_ENV
-          
-          if (-not (Get-LocalUser -Name "RDP")) {
+          if (-not (Get-LocalUser -Name "${{ env.RDP_USERNAME }}")) {
               Write-Error "User creation failed"
               exit 1
           }
 
       - name: Install Tailscale
         run: |
-          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-1.82.0-amd64.msi"
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
           $installerPath = "$env:TEMP\tailscale.msi"
-          
           Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
           Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
           Remove-Item $installerPath -Force
 
       - name: Establish Tailscale Connection
         run: |
-          # Bring up Tailscale with the provided auth key and set a unique hostname
-          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-runner-$env:GITHUB_RUN_ID
-          
-          # Wait for Tailscale to assign an IP
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-${{ github.repository_id }}
           $tsIP = $null
           $retries = 0
           while (-not $tsIP -and $retries -lt 10) {
@@ -79,18 +105,60 @@ jobs:
               Start-Sleep -Seconds 5
               $retries++
           }
-          
           if (-not $tsIP) {
               Write-Error "Tailscale IP not assigned. Exiting."
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-      
+
+      - name: Install Roblox Studio
+        run: |
+          # Descargar e instalar Roblox Studio desde el sitio oficial
+          $robloxUrl = "https://setup.roblox.com/RobloxStudioLauncherBeta.exe"
+          $installerPath = "$env:TEMP\RobloxStudio.exe"
+          Invoke-WebRequest -Uri $robloxUrl -OutFile $installerPath
+          Start-Process $installerPath -ArgumentList "--install" -Wait
+          Remove-Item $installerPath -Force
+          Write-Host "Roblox Studio instalado exitosamente."
+
+      - name: Install SuperBulletAI
+        run: |
+          # Descargar e instalar SuperBulletAI desde el sitio oficial
+          $sbaUrl = "https://ai.superbulletstudios.com/download"
+          $installerPath = "$env:TEMP\SuperBulletAI.exe"
+          Invoke-WebRequest -Uri $sbaUrl -OutFile $installerPath
+          Start-Process $installerPath -ArgumentList "/S" -Wait  # /S para instalación silenciosa
+          Remove-Item $installerPath -Force
+          Write-Host "SuperBulletAI instalado exitosamente. Registro requerido para tokens."
+          Start-Sleep -Seconds 120  # Espera 2 minutos para que termine la instalación
+
+      - name: Install Classic Shell (Open-Shell)
+        run: |
+          # Descargar e instalar Open-Shell (sucesor oficial de Classic Shell) desde GitHub releases
+          $csUrl = "https://github.com/Open-Shell/Open-Shell-Menu/releases/download/v4.4.220/OpenShellSetup_4_4_220.exe"
+          $installerPath = "$env:TEMP\OpenShell.exe"
+          Invoke-WebRequest -Uri $csUrl -OutFile $installerPath
+          Start-Process $installerPath -ArgumentList "/S" -Wait  # /S para instalación silenciosa
+          Remove-Item $installerPath -Force
+          Write-Host "Classic Shell (Open-Shell) instalado exitosamente. Reinicia la sesión RDP si no aplica automáticamente."
+
+      - name: Auto-Restart Setup (if enabled)
+        if: ${{ github.event.inputs.run_indefinitely == 'true' }}
+        run: |
+          Start-Sleep -Seconds 19800
+          $token = "${{ secrets.GITHUB_TOKEN }}"
+          $repo = "${{ github.repository }}"
+          $workflowId = "${{ github.workflow }}"
+          $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
+          $body = @{ ref = 'main'; inputs = @{ username = "${{ env.RDP_USERNAME }}"; password = "${{ env.RDP_PASSWORD }}"; run_indefinitely = "true" } } | ConvertTo-Json
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/$workflowId/dispatches" `
+                            -Method Post -Headers $headers -Body $body
+          Write-Host "Auto-restart triggered. This session will end soon."
+          exit
+
       - name: Verify RDP Accessibility
         run: |
           Write-Host "Tailscale IP: $env:TAILSCALE_IP"
-          
-          # Test connectivity using Test-NetConnection against the Tailscale IP on port 3389
           $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
           if (-not $testResult.TcpTestSucceeded) {
               Write-Error "TCP connection to RDP port 3389 failed"
@@ -102,12 +170,13 @@ jobs:
         run: |
           Write-Host "`n=== RDP ACCESS ==="
           Write-Host "Address: $env:TAILSCALE_IP"
-          Write-Host "Username: RDP"
-          Write-Host "Password: $(echo $env:RDP_CREDS)"
+          Write-Host "Username: ${{ env.RDP_USERNAME }}"
+          Write-Host "Password: [Masked - Check GitHub Secrets or initial workflow input]"
+          Write-Host "Apps instaladas: Roblox Studio, SuperBulletAI (regístrate para tokens), y Classic Shell (Open-Shell) para menú clásico"
+          Write-Host "To restart: Trigger the workflow again in GitHub Actions UI"
+          Write-Host "To terminate: Cancel the workflow in GitHub Actions UI"
           Write-Host "==================`n"
-          
-          # Keep runner active indefinitely (or until manually cancelled)
           while ($true) {
-              Write-Host "[$(Get-Date)] RDP Active - Use Ctrl+C in workflow to terminate"
+              Write-Host "[$(Get-Date)] RDP Active - Manage via GitHub Actions UI"
               Start-Sleep -Seconds 300
           }

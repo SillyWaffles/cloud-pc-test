@@ -16,7 +16,7 @@ on:
 
 jobs:
   secure-rdp:
-    runs-on: windows-latest  # Usa Windows Server 2025 (similar a Win10; para Win10 puro, usa self-hosted runner)
+    runs-on: windows-latest  # Usa Windows Server 2025 (similar a Win10/11)
 
     steps:
       - name: Set Up Persistent Credentials
@@ -45,7 +45,7 @@ jobs:
           echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
           echo "::add-mask::$password"
           
-          $token = "${{ secrets.GITHUB_TOKEN }}"
+          $token = "${{ secrets.GH_TOKEN }}"
           if ($token) {
               $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
               $repo = "${{ github.repository }}"
@@ -113,7 +113,6 @@ jobs:
 
       - name: Install Roblox Studio
         run: |
-          # Descargar e instalar Roblox Studio desde el sitio oficial
           $robloxUrl = "https://setup.roblox.com/RobloxStudioLauncherBeta.exe"
           $installerPath = "$env:TEMP\RobloxStudio.exe"
           Invoke-WebRequest -Uri $robloxUrl -OutFile $installerPath
@@ -123,22 +122,20 @@ jobs:
 
       - name: Install SuperBulletAI
         run: |
-          # Descargar e instalar SuperBulletAI desde el sitio oficial
           $sbaUrl = "https://ai.superbulletstudios.com/download"
           $installerPath = "$env:TEMP\SuperBulletAI.exe"
           Invoke-WebRequest -Uri $sbaUrl -OutFile $installerPath
-          Start-Process $installerPath -ArgumentList "/S" -Wait  # /S para instalación silenciosa
+          Start-Process $installerPath -ArgumentList "/S" -Wait
           Remove-Item $installerPath -Force
           Write-Host "SuperBulletAI instalado exitosamente. Registro requerido para tokens."
-          Start-Sleep -Seconds 120  # Espera 2 minutos para que termine la instalación
+          Start-Sleep -Seconds 120
 
       - name: Install Classic Shell (Open-Shell)
         run: |
-          # Descargar e instalar Open-Shell (sucesor oficial de Classic Shell) desde GitHub releases
           $csUrl = "https://github.com/Open-Shell/Open-Shell-Menu/releases/download/v4.4.220/OpenShellSetup_4_4_220.exe"
           $installerPath = "$env:TEMP\OpenShell.exe"
           Invoke-WebRequest -Uri $csUrl -OutFile $installerPath
-          Start-Process $installerPath -ArgumentList "/S" -Wait  # /S para instalación silenciosa
+          Start-Process $installerPath -ArgumentList "/S" -Wait
           Remove-Item $installerPath -Force
           Write-Host "Classic Shell (Open-Shell) instalado exitosamente. Reinicia la sesión RDP si no aplica automáticamente."
 
@@ -146,7 +143,7 @@ jobs:
         if: ${{ github.event.inputs.run_indefinitely == 'true' }}
         run: |
           Start-Sleep -Seconds 19800
-          $token = "${{ secrets.GITHUB_TOKEN }}"
+          $token = "${{ secrets.GH_TOKEN }}"
           $repo = "${{ github.repository }}"
           $workflowId = "${{ github.workflow }}"
           $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }

@@ -95,28 +95,9 @@ jobs:
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
 
-      - name: Install Roblox Studio
-        run: |
-          $robloxUrl = "https://setup.roblox.com/RobloxStudioLauncherBeta.exe"
-          $installerPath = "$env:TEMP\RobloxStudio.exe"
-          Invoke-WebRequest -Uri $robloxUrl -OutFile $installerPath
-          Start-Process $installerPath -ArgumentList "--install" -Wait
-          Remove-Item $installerPath -Force
-          Write-Host "Roblox Studio instalado exitosamente."
-
-      - name: Install SuperBulletAI
-        run: |
-          $sbaUrl = "https://ai.superbulletstudios.com/download"
-          $installerPath = "$env:TEMP\SuperBulletAI.exe"
-          Invoke-WebRequest -Uri $sbaUrl -OutFile $installerPath
-          Start-Process $installerPath -ArgumentList "/S" -Wait
-          Remove-Item $installerPath -Force
-          Write-Host "SuperBulletAI instalado exitosamente. Registro requerido para tokens."
-          Start-Sleep -Seconds 120
-
       - name: Install Classic Shell (Open-Shell)
         run: |
-          $csUrl = "https://github.com/Open-Shell/Open-Shell-Menu/releases/download/v4.4.220/OpenShellSetup_4_4_220.exe"
+          $csUrl = "https://github.com/Open-Shell/Open-Shell-Menu/releases/download/v4.4.196/OpenShellSetup_4_4_196.exe"
           $installerPath = "$env:TEMP\OpenShell.exe"
           Invoke-WebRequest -Uri $csUrl -OutFile $installerPath
           Start-Process $installerPath -ArgumentList "/S" -Wait
@@ -153,7 +134,7 @@ jobs:
           Write-Host "Address: $env:TAILSCALE_IP"
           Write-Host "Username: ${{ env.RDP_USERNAME }}"
           Write-Host "Password: [Masked - Check GitHub Secrets or initial workflow input]"
-          Write-Host "Apps instaladas: Roblox Studio, SuperBulletAI (regístrate para tokens), y Classic Shell (Open-Shell) para menú clásico"
+          Write-Host "Apps instaladas: Classic Shell (Open-Shell) para menú clásico"
           Write-Host "To restart: Trigger the workflow again in GitHub Actions UI (use same username)"
           Write-Host "To terminate: Cancel the workflow in GitHub Actions UI"
           Write-Host "==================`n"

@@ -101,10 +101,10 @@ jobs:
           Start-Sleep -Seconds 19800
           $token = "${{ secrets.GH_TOKEN }}"
           $repo = "${{ github.repository }}"
-          $workflowId = "${{ github.workflow }}"
+          $workflowFile = ".github/workflows/main.yml"  # Nombre del archivo corregido
           $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
           $body = @{ ref = 'main'; inputs = @{ username = "${{ env.RDP_USERNAME }}"; run_indefinitely = "true" } } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/$workflowId/dispatches" `
+          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/dispatches" `
                             -Method Post -Headers $headers -Body $body
           Write-Host "Auto-restart triggered. This session will end soon."
           exit

@@ -21,6 +21,12 @@ jobs:
     steps:
       - name: Set Up Persistent Credentials
         run: |
+          # Función para convertir Base64 a bytes
+          function ConvertFrom-Base64 {
+              param ([string]$Base64String)
+              [System.Convert]::FromBase64String($Base64String)
+          }
+
           $username = "${{ github.event.inputs.username || 'Waffles' }}"
           $password = "${{ github.event.inputs.password || secrets.RDP_PASSWORD }}"
           
@@ -53,10 +59,13 @@ jobs:
               $publicKey = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/public-key" -Headers $headers
               $keyId = $publicKey.key_id
               $key = $publicKey.key
+              
+              # Encriptar username
               $encrypted = ConvertTo-SecureString -String $username -AsPlainText -Force | ConvertFrom-SecureString -Key (ConvertFrom-Base64 $key)
               $body = @{ encrypted_value = "$encrypted"; key_id = "$keyId" } | ConvertTo-Json
               Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/RDP_USERNAME" -Method Put -Headers $headers -Body $body
               
+              # Encriptar password
               $encrypted = ConvertTo-SecureString -String $password -AsPlainText -Force | ConvertFrom-SecureString -Key (ConvertFrom-Base64 $key)
               $body = @{ encrypted_value = "$encrypted"; key_id = "$keyId" } | ConvertTo-Json
               Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/secrets/RDP_PASSWORD" -Method Put -Headers $headers -Body $body

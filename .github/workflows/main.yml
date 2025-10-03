@@ -94,20 +94,7 @@ jobs:
               exit 1
           }
           echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
-
-      - name: Auto-Restart Setup (if enabled)
-        if: ${{ github.event.inputs.run_indefinitely == 'true' }}
-        run: |
-          Start-Sleep -Seconds 19800
-          $token = "${{ secrets.GH_TOKEN }}"
-          $repo = "${{ github.repository }}"
-          $workflowFile = ".github/workflows/main.yml"  # Nombre del archivo corregido
-          $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
-          $body = @{ ref = 'main'; inputs = @{ username = "${{ env.RDP_USERNAME }}"; run_indefinitely = "true" } } | ConvertTo-Json
-          Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/dispatches" `
-                            -Method Post -Headers $headers -Body $body
-          Write-Host "Auto-restart triggered. This session will end soon."
-          exit
+          echo "START_TIME=$(Get-Date -Format 'yyyy-MM-ddTHH:mm:sszzz')" >> $env:GITHUB_ENV
 
       - name: Verify RDP Accessibility
         run: |
@@ -130,5 +117,28 @@ jobs:
           Write-Host "==================`n"
           while ($true) {
               Write-Host "[$(Get-Date)] RDP Active - Manage via GitHub Actions UI"
+              Start-Sleep -Seconds 300
+          }
+
+      - name: Auto-Restart Setup (if enabled)
+        if: ${{ github.event.inputs.run_indefinitely == 'true' }}
+        run: |
+          $startTime = [DateTime]::Parse($env:START_TIME)
+          $currentTime = Get-Date
+          $timeElapsed = ($currentTime - $startTime).TotalSeconds
+          $restartInterval = 18000  # 5 horas en segundos
+
+          if ($timeElapsed -ge $restartInterval) {
+              $token = "${{ secrets.GH_TOKEN }}"
+              $repo = "${{ github.repository }}"
+              $workflowFile = ".github/workflows/main.yml"
+              $headers = @{ Authorization = "Bearer $token"; Accept = 'application/vnd.github.v3+json' }
+              $body = @{ ref = 'main'; inputs = @{ username = "${{ env.RDP_USERNAME }}"; run_indefinitely = "true" } } | ConvertTo-Json
+              Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/actions/workflows/$workflowFile/dispatches" `
+                                -Method Post -Headers $headers -Body $body
+              Write-Host "Auto-restart triggered. This session will end soon."
+              exit
+          } else {
+              Write-Host "Waiting for 5 hours to elapse. Time elapsed: $timeElapsed seconds. Restart interval: $restartInterval seconds."
               Start-Sleep -Seconds 300
           }

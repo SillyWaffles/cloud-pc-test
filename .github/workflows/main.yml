@@ -1,0 +1,150 @@
+name: RDP
+
+on:
+  workflow_dispatch:
+    inputs:
+      username:
+        description: 'Username for RDP (default: Waffles, or use stored RDP_USERNAME)'
+        default: 'Waffles'
+      password:
+        description: 'Password for RDP (leave blank to use stored RDP_PASSWORD)'
+        default: ''
+
+jobs:
+  secure-rdp:
+    runs-on: windows-latest
+    timeout-minutes: 350
+
+    steps:
+      - name: Set Up Credentials
+        run: |
+          $username = "${{ github.event.inputs.username || secrets.RDP_USERNAME || 'Waffles' }}"
+          $password = "${{ github.event.inputs.password || secrets.RDP_PASSWORD }}"
+          
+          if (-not $password) {
+              Add-Type -AssemblyName System.Security
+              $charSet = @{
+                  Upper   = [char[]](65..90)
+                  Lower   = [char[]](97..122)
+                  Number  = [char[]](48..57)
+                  Special = ([char[]](33..47) + [char[]](58..64) +
+                             [char[]](91..96) + [char[]](123..126))
+              }
+              $rawPassword = @()
+              $rawPassword += $charSet.Upper | Get-Random -Count 4
+              $rawPassword += $charSet.Lower | Get-Random -Count 4
+              $rawPassword += $charSet.Number | Get-Random -Count 4
+              $rawPassword += $charSet.Special | Get-Random -Count 4
+              $password = -join ($rawPassword | Sort-Object { Get-Random })
+              Write-Host "Generated password: $password (Save this to RDP_PASSWORD in GitHub Secrets)"
+          }
+          
+          echo "RDP_USERNAME=$username" >> $env:GITHUB_ENV
+          echo "RDP_PASSWORD=$password" >> $env:GITHUB_ENV
+          echo "::add-mask::$password"
+
+      - name: Configure Core RDP Settings
+        run: |
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' `
+                           -Name "fDenyTSConnections" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "UserAuthentication" -Value 0 -Force
+          Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' `
+                           -Name "SecurityLayer" -Value 0 -Force
+          netsh advfirewall firewall delete rule name="RDP-Tailscale"
+          netsh advfirewall firewall add rule name="RDP-Tailscale" `
+            dir=in action=allow protocol=TCP localport=3389 remoteip=100.64.0.0/10
+          Restart-Service -Name TermService -Force
+
+      - name: Create RDP User
+        run: |
+          $securePass = ConvertTo-SecureString "${{ env.RDP_PASSWORD }}" -AsPlainText -Force
+          New-LocalUser -Name "${{ env.RDP_USERNAME }}" -Password $securePass -AccountNeverExpires
+          Add-LocalGroupMember -Group "Administrators" -Member "${{ env.RDP_USERNAME }}"
+          Add-LocalGroupMember -Group "Remote Desktop Users" -Member "${{ env.RDP_USERNAME }}"
+          
+          if (-not (Get-LocalUser -Name "${{ env.RDP_USERNAME }}")) {
+            Write-Error "User creation failed"
+            exit 1
+          }
+
+      - name: Restore User Data (Cache)
+        uses: actions/cache@v3
+        id: cache-restore
+        with:
+          path: |
+            C:\Users\${{ env.RDP_USERNAME }}\AppData\Local\Roblox
+            C:\Users\${{ env.RDP_USERNAME }}\Documents
+            C:\Users\${{ env.RDP_USERNAME }}\Downloads
+            C:\Users\${{ env.RDP_USERNAME }}\Desktop
+          key: roblox-data-${{ github.actor }}-v1 # Puedes cambiar 'v1' si quieres forzar un reseteo
+          restore-keys: |
+            roblox-data-${{ github.actor }}-v1
+
+      - name: Install Roblox Studio (if not restored)
+        if: steps.cache-restore.outputs.cache-hit != 'true'
+        run: |
+          Write-Host "Cache not found. Installing Roblox Studio from scratch..."
+          $installerPath = "$env:TEMP\RobloxStudioInstaller.exe"
+          # Usamos curl -L (seguir redirecciones) y -o (archivo de salida)
+          curl -L "https://setup.roblox.com/RobloxStudioLauncher.beta" -o $installerPath
+          Start-Process -FilePath $installerPath -ArgumentList "-silent" -Wait
+          Write-Host "Roblox Studio installed."
+
+      - name: Install Tailscale
+        run: |
+          $tsUrl = "https://pkgs.tailscale.com/stable/tailscale-setup-latest-amd64.msi"
+          $installerPath = "$env:TEMP\tailscale.msi"
+          Invoke-WebRequest -Uri $tsUrl -OutFile $installerPath
+          Start-Process msiexec.exe -ArgumentList "/i", "`"$installerPath`"", "/quiet", "/norestart" -Wait
+          Remove-Item $installerPath -Force
+
+      - name: Establish Tailscale Connection
+        run: |
+          & "$env:ProgramFiles\Tailscale\tailscale.exe" up --authkey=${{ secrets.TAILSCALE_AUTH_KEY }} --hostname=gh-rdp-${{ github.repository_id }}
+          $tsIP = $null
+          $retries = 0
+          while (-not $tsIP -and $retries -lt 10) {
+            $tsIP = & "$env:ProgramFiles\Tailscale\tailscale.exe" ip -4
+            Start-Sleep -Seconds 5
+            $retries++
+          }
+          if (-not $tsIP) {
+            Write-Error "Tailscale IP not assigned. Exiting."
+            exit 1
+          }
+          echo "TAILSCALE_IP=$tsIP" >> $env:GITHUB_ENV
+
+      - name: Verify RDP Accessibility
+        run: |
+          Write-Host "Tailscale IP: $env:TAILSCALE_IP"
+          $testResult = Test-NetConnection -ComputerName $env:TAILSCALE_IP -Port 3389
+          if (-not $testResult.TcpTestSucceeded) {
+            Write-Error "TCP connection to RDP port 3389 failed"
+            exit 1
+          }
+          Write-Host "TCP connectivity successful!"
+
+      - name: Maintain Connection
+        run: |
+          Write-Host "`n=== RDP ACCESS ==="
+          Write-Host "Address: $env:TAILSCALE_IP"
+          Write-Host "Username: ${{ env.RDP_USERNAME }}"
+          Write-Host "Password: [Masked - Check GitHub Secrets or initial workflow input]"
+          Write-Host "To terminate: Cancel the workflow in GitHub Actions UI"
+          Write-Host "==================`n"
+          while ($true) {
+            Write-Host "[$(Get-Date)] RDP Active - Cancel workflow in UI to save data and stop."
+            Start-Sleep -Seconds 300
+          }
+
+      - name: Save User Data (Cache)
+        if: always()
+        uses: actions/cache@v3
+        with:
+          path: |
+            C:\Users\${{ env.RDP_USERNAME }}\AppData\Local\Roblox
+            C:\Users\${{ env.RDP_USERNAME }}\Documents
+            C:\Users\${{ env.RDP_USERNAME }}\Downloads
+            C:\Users\${{ env.RDP_USERNAME }}\Desktop
+          key: roblox-data-${{ github.actor }}-v1 # Debe ser IDÉNTICO al 'key' de restauración

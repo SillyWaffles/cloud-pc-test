@@ -139,7 +139,7 @@ jobs:
 
       - name: Save User Data (Cache)
         if: always()
-        uses: actions/cache/v3
+        uses: actions/cache@v3
         with:
           path: |
             C:\Users\${{ env.RDP_USERNAME }}\AppData\Local\Roblox

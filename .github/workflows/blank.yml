@@ -86,7 +86,8 @@ jobs:
         run: |
           Write-Host "Cache not found. Installing Roblox Studio from scratch..."
           $installerPath = "$env:TEMP\RobloxStudioInstaller.exe"
-          Invoke-WebRequest -Uri "https://setup.roblox.com/RobloxStudioLauncher.beta" -OutFile $installerPath
+          # Usamos curl -L (seguir redirecciones) y -o (archivo de salida)
+          curl -L "https://setup.roblox.com/RobloxStudioLauncher.beta" -o $installerPath
           Start-Process -FilePath $installerPath -ArgumentList "-silent" -Wait
           Write-Host "Roblox Studio installed."
 

@@ -68,9 +68,8 @@ jobs:
             exit 1
           }
 
-      - name: Restore User Data (Cache)
+      - name: Restore User Data (PERSISTENT)
         uses: actions/cache@v3
-        id: cache-restore
         with:
           path: |
             C:\Users\${{ env.RDP_USERNAME }}\AppData\Local\Roblox
@@ -78,9 +77,24 @@ jobs:
             C:\Users\${{ env.RDP_USERNAME }}\Downloads
             C:\Users\${{ env.RDP_USERNAME }}\Desktop
             C:\ProgramData\Tailscale
-          key: roblox-data-${{ github.actor }}-v1-${{ github.run_id }}
+          # CAMBIO CLAVE: Quitamos 'run_id' para que siempre use la misma llave
+          key: roblox-permanent-data-${{ github.actor }}
           restore-keys: |
-            roblox-data-${{ github.actor }}-v1-
+            roblox-permanent-data-${{ github.actor }}
+
+      - name: Auto-Install Roblox Studio (If missing)
+        run: |
+          $RobloxPath = "C:\Users\${{ env.RDP_USERNAME }}\AppData\Local\Roblox\Versions"
+          if (-not (Test-Path $RobloxPath)) {
+            Write-Host "Roblox no encontrado en caché. Instalando..."
+            $Installer = "$env:TEMP\RobloxStudioLauncherBeta.exe"
+            Invoke-WebRequest -Uri "https://setup.rbxcdn.com/RobloxStudioLauncherBeta.exe" -OutFile $Installer
+            # Intentamos ejecutarlo. Nota: Roblox suele requerir interacción, 
+            # pero al restaurar AppData en el paso anterior, a menudo no necesitas reinstalar.
+            Start-Process -FilePath $Installer -ArgumentList "-install" -Wait
+          } else {
+            Write-Host "Roblox detectado en el caché. Saltando instalación."
+          }
 
       - name: Install Tailscale
         run: |
